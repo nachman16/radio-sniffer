@@ -189,7 +189,6 @@ const refreshToken = () => {
       (body) => {
         console.log("INFO: Call to refresh access token succeeded");
         access_token = body.access_token;
-        refresh_token = body.refresh_token;
       },
       (error) => console.log("ERROR: tried fetching new access token and failed, " + error)
     );
@@ -213,6 +212,6 @@ const generateRandomString = (length) => {
 
 
 // start application
-setTimeout(refreshSpotifyToken, 1000 * 60 * 30);
+refreshSpotifyToken();
 console.log('INFO: Listening on 8888');
 app.listen(8888);
