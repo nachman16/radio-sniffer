@@ -173,8 +173,8 @@ const refreshSpotifyToken = () => setTimeout(refreshToken, 1000 * 60 * 30);
 const refreshToken = () => {
   const authOptions = {
     method: 'POST',
-    uri: 'https://accounts.spotify.com/api/token',
-    formData: {
+    url: 'https://accounts.spotify.com/api/token',
+    form: {
       refresh_token: refresh_token,
       grant_type: 'refresh_token'
     },
