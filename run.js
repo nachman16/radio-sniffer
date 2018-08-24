@@ -139,7 +139,7 @@ const addSong = () => {
     )
     .then(
       (body) => {
-        const firstResult = body.tracks && body.tracks.items ? body.tracks.items[0] : null;
+        const firstResult = body && body.tracks && body.tracks.items ? body.tracks.items[0] : null;
         if (firstResult) {
           return addSongToPlayList(firstResult);
         } else {
