@@ -10,12 +10,14 @@ const client_id = ''; // Your client id
 const client_secret = ''; // Your secret
 const redirect_uri = 'http://localhost:8888/callback'; // Your redirect uri
 const stateKey = 'spotify_auth_state';
+const playlistId = '';
 
 const app = express();
 
 let access_token;
 let refresh_token;
 let previousTerm = {};
+let songCache;
 
 
 app.use(express.static(__dirname + '/public'))
@@ -89,11 +91,28 @@ function findSongOnSpotify(query) {
   return rp(options);
 }
 
+function seedSongCacheToPreventDuplicates() {
+  const options = {
+    uri: 'https://api.spotify.com/v1/playlists/' + playlistId + '/tracks',
+    headers: {
+      'Authorization': 'Bearer ' + access_token
+    },
+    json: true
+  };
+  console.log("INFO: Calling " + options.uri)
+  return rp(options);
+}
+
 function addSongToPlayList(spotifyTrack) {
-  const playlistid = ''
+  if (songCache.has(spotifyTrack.uri)) {
+    return Promise.reject("Song is a duplicate. Not adding.");
+  }
+
+  songCache.add(spotifyTrack.uri);
+
   const options = {
     method: 'POST',
-    uri: 'https://api.spotify.com/v1/playlists/' + playlistid + '/tracks?uris=' + spotifyTrack.uri,
+    uri: 'https://api.spotify.com/v1/playlists/' + playlistId + '/tracks?uris=' + spotifyTrack.uri,
     headers: {
       'Authorization': 'Bearer ' + access_token
     },
@@ -121,7 +140,13 @@ const getCurrentSiriusSong = () => {
 };
 
 const addSong = () => {
-  getCurrentSiriusSong()
+  seedSongCacheToPreventDuplicates()
+    .then((body) => {
+      if (body) {
+        songCache = new Set(body.items.map(i => i.uri));
+      }
+      return getCurrentSiriusSong();
+    })
     .then(
       (body) => {
         if (body && body.channelMetadataResponse && body.channelMetadataResponse.metaData && body.channelMetadataResponse.metaData.currentEvent) {
