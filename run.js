@@ -5,12 +5,10 @@ const querystring = require('querystring');
 const cookieParser = require('cookie-parser');
 const moment = require('moment')
 
-// spotify client info
-const client_id = ''; // Your client id
-const client_secret = ''; // Your secret
+// spotify client info (client_id, client_secret, and playlistid)
+const spotifyConfig = require('./spotify_config');
 const redirect_uri = 'http://localhost:8888/callback'; // Your redirect uri
 const stateKey = 'spotify_auth_state';
-const playlistId = '';
 
 const app = express();
 
@@ -33,7 +31,7 @@ app.get('/login', (req, res) => {
   res.redirect('https://accounts.spotify.com/authorize?' +
     querystring.stringify({
       response_type: 'code',
-      client_id: client_id,
+      client_id: spotifyConfig.client_id,
       scope: scope,
       redirect_uri: redirect_uri,
       state: state
@@ -62,7 +60,7 @@ app.get('/callback', (req, res) => {
         grant_type: 'authorization_code'
       },
       headers: {
-        'Authorization': 'Basic ' + (new Buffer(client_id + ':' + client_secret).toString('base64'))
+        'Authorization': 'Basic ' + (new Buffer(spotifyConfig.client_id + ':' + spotifyConfig.client_secret).toString('base64'))
       },
       json: true
     };
@@ -72,7 +70,16 @@ app.get('/callback', (req, res) => {
           console.log("Authenticated successfully");
           access_token = body.access_token;
           refresh_token = body.refresh_token;
-          getCurrentSiriusSongAndAddToSpotify(0);
+          seedSongCacheToPreventDuplicates()
+            .then(
+              (body) => {
+                if (body) {
+                  songCache = new Set(body.items.map(i => i.track.uri));
+                }
+                getCurrentSiriusSongAndAddToSpotify(0);
+              },
+              (error) => console.log("ERROR: Could not fetch playlist to seed cache, " + error)
+            );
         },
         (error) => console.log("ERROR: Could not authenticate, " + error)
       );
@@ -93,7 +100,7 @@ function findSongOnSpotify(query) {
 
 function seedSongCacheToPreventDuplicates() {
   const options = {
-    uri: 'https://api.spotify.com/v1/playlists/' + playlistId + '/tracks',
+    uri: 'https://api.spotify.com/v1/playlists/' + spotifyConfig.playlistId + '/tracks',
     headers: {
       'Authorization': 'Bearer ' + access_token
     },
@@ -112,7 +119,7 @@ function addSongToPlayList(spotifyTrack) {
 
   const options = {
     method: 'POST',
-    uri: 'https://api.spotify.com/v1/playlists/' + playlistId + '/tracks?uris=' + spotifyTrack.uri,
+    uri: 'https://api.spotify.com/v1/playlists/' + spotifyConfig.playlistId + '/tracks?uris=' + spotifyTrack.uri,
     headers: {
       'Authorization': 'Bearer ' + access_token
     },
@@ -140,13 +147,7 @@ const getCurrentSiriusSong = () => {
 };
 
 const addSong = () => {
-  seedSongCacheToPreventDuplicates()
-    .then((body) => {
-      if (body) {
-        songCache = new Set(body.items.map(i => i.uri));
-      }
-      return getCurrentSiriusSong();
-    })
+  getCurrentSiriusSong()
     .then(
       (body) => {
         if (body && body.channelMetadataResponse && body.channelMetadataResponse.metaData && body.channelMetadataResponse.metaData.currentEvent) {
@@ -185,10 +186,10 @@ const addSong = () => {
         if (body) {
           console.log("INFO: added song successfully");
         }
-        getCurrentSiriusSongAndAddToSpotify(120 * 1000);
       },
       (error) => console.log("ERROR: tried adding song to playlist on Spotify and failed, " + error)
     );
+  getCurrentSiriusSongAndAddToSpotify(120 * 1000);
 };
 
 const getCurrentSiriusSongAndAddToSpotify = (timeout) => setTimeout(addSong, timeout);
@@ -204,7 +205,7 @@ const refreshToken = () => {
       grant_type: 'refresh_token'
     },
     headers: {
-      'Authorization': 'Basic ' + (new Buffer(client_id + ':' + client_secret).toString('base64'))
+      'Authorization': 'Basic ' + (new Buffer(spotifyConfig.client_id + ':' + spotifyConfig.client_secret).toString('base64'))
     },
     json: true
   };
