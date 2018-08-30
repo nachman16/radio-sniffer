@@ -10,18 +10,16 @@ const spotifyConfig = require('./spotify_config');
 const redirect_uri = 'http://localhost:8888/callback'; // Your redirect uri
 const stateKey = 'spotify_auth_state';
 
-const app = express();
-
 let access_token;
 let refresh_token;
 let previousTerm = {};
-let songCache;
+let currentPlaylist;
+let songCache = new Set();
 
-
+const app = express();
 app.use(express.static(__dirname + '/public'))
   .use(cors())
   .use(cookieParser());
-
 app.get('/login', (req, res) => {
   const state = generateRandomString(16);
   res.cookie(stateKey, state);
@@ -38,7 +36,6 @@ app.get('/login', (req, res) => {
     })
   );
 });
-
 app.get('/callback', (req, res) => {
   const code = req.query.code || null;
   const state = req.query.state || null;
@@ -70,23 +67,33 @@ app.get('/callback', (req, res) => {
           console.log("Authenticated successfully");
           access_token = body.access_token;
           refresh_token = body.refresh_token;
-          seedSongCacheToPreventDuplicates()
-            .then(
-              (body) => {
-                if (body) {
-                  songCache = new Set(body.items.map(i => i.track.uri));
-                }
-                getCurrentSiriusSongAndAddToSpotify(0);
-              },
-              (error) => console.log("ERROR: Could not fetch playlist to seed cache, " + error)
-            );
+          getPlaylists('Sirius')
+            .then((body) => {
+              if (body) {
+                let promises = [];
+                body.forEach((playlist) => {
+                  if (playlist.tracks.total < 100) {
+                    currentPlaylist = playlist;
+                  }
+                  promises.push(seedSongCacheToPreventDuplicates(playlist.id).then(
+                    (body) => {
+                      if (body) {
+                        body.items.forEach(i => songCache.add(i.track.uri));
+                      }
+                    },
+                    (error) => console.log("ERROR: Could not fetch playlist to seed cache, " + error)
+                  ))
+                });
+                Promise.all(promises).then(() => getCurrentSiriusSongAndAddToSpotify(0));
+              }
+            });
         },
         (error) => console.log("ERROR: Could not authenticate, " + error)
       );
   }
 });
 
-function findSongOnSpotify(query) {
+const findSongOnSpotify = (query) => {
   const options = {
     uri: 'https://api.spotify.com/v1/search?type=track&q=' + encodeURIComponent(query),
     headers: {
@@ -98,9 +105,9 @@ function findSongOnSpotify(query) {
   return rp(options);
 }
 
-function seedSongCacheToPreventDuplicates() {
+const seedSongCacheToPreventDuplicates = (playlistId) => {
   const options = {
-    uri: 'https://api.spotify.com/v1/playlists/' + spotifyConfig.playlistId + '/tracks',
+    uri: 'https://api.spotify.com/v1/playlists/' + playlistId + '/tracks',
     headers: {
       'Authorization': 'Bearer ' + access_token
     },
@@ -110,7 +117,50 @@ function seedSongCacheToPreventDuplicates() {
   return rp(options);
 }
 
-function addSongToPlayList(spotifyTrack) {
+const getPlaylists = (suffix) => {
+  const options = {
+    uri: 'https://api.spotify.com/v1/me/playlists',
+    headers: {
+      'Authorization': 'Bearer ' + access_token
+    },
+    json: true
+  };
+  console.log("INFO: Calling " + options.uri)
+  return rp(options)
+      .then(
+        (body) => {
+          if (body && body.items) {
+            return body.items.filter((playlist) => playlist.name.startsWith(suffix));
+          }
+        },
+        (error) => console.log("ERROR: tried getting playlist failed, " + error)
+      );
+};
+
+const createNewPlaylist = () => {
+  const options = {
+    method: 'POST',
+    uri: 'https://api.spotify.com/v1/users/' + spotifyConfig.userId + '/playlists',
+    headers: {
+      'Authorization': 'Bearer ' + access_token
+    },
+    form: {
+      name: 'Sirius Real Jazz ' + (currentPlaylist.split(' ').pop() + 1)
+    },
+    json: true
+  };
+  console.log("INFO: Calling " + options.uri)
+  return rp(options);
+}
+
+const checkAndMaybeCreateNewPlaylist = () => {
+  if (currentPlaylist.tracks.length >= 100) {
+    return createNewPlaylist();
+  }
+  return Promise.resolve();
+}
+
+const addSongToPlayList = (spotifyTrack) => {
   if (songCache.has(spotifyTrack.uri)) {
     return Promise.reject("Song is a duplicate. Not adding.");
   }
@@ -119,7 +169,7 @@ function addSongToPlayList(spotifyTrack) {
 
   const options = {
     method: 'POST',
-    uri: 'https://api.spotify.com/v1/playlists/' + spotifyConfig.playlistId + '/tracks?uris=' + spotifyTrack.uri,
+    uri: 'https://api.spotify.com/v1/playlists/' + currentPlaylist.id + '/tracks?uris=' + spotifyTrack.uri,
     headers: {
       'Authorization': 'Bearer ' + access_token
     },
@@ -185,6 +235,15 @@ const addSong = () => {
       (body) => {
         if (body) {
           console.log("INFO: added song successfully");
+          checkAndMaybeCreateNewPlaylist()
+            .then(
+              (body) => {
+                if (body) {
+                  currentPlaylist = body;
+                }
+              },
+              (error) => console.log("ERROR: tried creating a playlist on Spotify and failed, " + error)
+              );
         }
       },
       (error) => console.log("ERROR: tried adding song to playlist on Spotify and failed, " + error)
@@ -235,7 +294,6 @@ const generateRandomString = (length) => {
   }
   return text;
 };
-
 
 // start application
 refreshSpotifyToken();
