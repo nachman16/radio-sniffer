@@ -50,36 +50,34 @@ app.get('/callback', (req, res) => {
   } else {
     res.clearCookie(stateKey);
     authenticateOnSpotify(code)
-      .then(
-        (authenticationInfo) => {
-          logInfo('Authenticated successfully');
-          access_token = authenticationInfo.access_token;
-          refresh_token = authenticationInfo.refresh_token;
-          getPlaylists('Sirius')
-            .then((playlists) => {
-              if (playlists) {
-                let promises = [];
-                playlists.forEach((playlist) => {
-                  if (playlist.tracks.total < 100) {
-                    currentPlaylist = playlist;
-                  }
-                  promises.push(getPlaylistTracks(playlist.id).then(
-                    (playlist) => {
-                      if (playlist) {
-                        playlist.items.forEach(i => songCache.add(i.track.uri));
-                      }
-                    },
-                    logError
-                  ))
-                });
-                Promise.all(promises).then(() => getCurrentSiriusSongAndAddToSpotify(0));
-              }
-            });
-        },
-        logError
-      );
+      .then(seedCache, logError)
+      .then(() => getCurrentSiriusSongAndAddToSpotify(0), logError);
   }
 });
+
+const seedCache = () => {
+  return getPlaylists('Sirius')
+    .then(
+      (playlists) => {
+        if (playlists) {
+          let promises = [];
+          playlists.forEach((playlist) => {
+            if (playlist.tracks.total < 100) {
+              currentPlaylist = playlist;
+            }
+            promises.push(getPlaylistTracks(playlist.id).then(
+              (playlist) => {
+                if (playlist) {
+                  playlist.items.forEach(i => songCache.add(i.track.uri));
+                }
+              },
+              logError
+            ));
+          });
+          return Promise.all(promises);
+        }
+      }, logError);
+}
 
 const authenticateOnSpotify = (code) => {
   const authOptions = {
@@ -95,7 +93,13 @@ const authenticateOnSpotify = (code) => {
     },
     json: true
   };
-  return rp(authOptions);
+  return rp(authOptions)
+    .then(
+      (authenticationInfo) => {
+        logInfo('Authenticated successfully');
+        access_token = authenticationInfo.access_token;
+        refresh_token = authenticationInfo.refresh_token;
+      }, logError);
 };
 
 // spotify methods
@@ -145,14 +149,14 @@ const getPlaylists = (suffix) => {
   };
   logInfo('Calling ' + options.uri)
   return rp(options)
-      .then(
-        (playlistCollection) => {
-          if (playlistCollection && playlistCollection.items) {
-            return playlistCollection.items.filter((playlist) => playlist.name.startsWith(suffix));
-          }
-        },
-        logError
-      );
+    .then(
+      (playlistCollection) => {
+        if (playlistCollection && playlistCollection.items) {
+          return playlistCollection.items.filter((playlist) => playlist.name.startsWith(suffix));
+        }
+      },
+      logError
+    );
 };
 
 const createNewPlaylist = () => {
@@ -217,8 +221,6 @@ const getCurrentSiriusSong = () => {
     },
     json: true
   };
-
-  // sirius part
   return rp(opts);
 };
 
@@ -271,7 +273,7 @@ const addSong = () => {
                 }
               },
               logError
-              );
+            );
         }
       },
       logError
@@ -327,7 +329,7 @@ const logError = (error) => log('ERROR', error);
 
 const logInfo = (info) => log('INFO', info);
 
-const log = (level, msg) => console.log(level + ': ' + msg); 
+const log = (level, msg) => console.log(level + ': ' + msg);
 
 // start application
 refreshSpotifyToken();
