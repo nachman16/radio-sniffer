@@ -50,8 +50,9 @@ app.get('/callback', (req, res) => {
   } else {
     res.clearCookie(stateKey);
     authenticateOnSpotify(code)
-      .then(seedCache, logError)
-      .then(() => getCurrentSiriusSongAndAddToSpotify(0), logError);
+      .then(seedCache)
+      .then(() => getCurrentSiriusSongAndAddToSpotify(0))
+      .catch(logError);
   }
 });
 
@@ -70,13 +71,13 @@ const seedCache = () => {
                 if (playlist) {
                   playlist.items.forEach(i => songCache.add(i.track.uri));
                 }
-              },
-              logError
+              }
             ));
           });
           return Promise.all(promises);
         }
-      }, logError);
+        return Promise.reject('Could not find any playlists');
+      });
 }
 
 const authenticateOnSpotify = (code) => {
@@ -99,20 +100,44 @@ const authenticateOnSpotify = (code) => {
         logInfo('Authenticated successfully');
         access_token = authenticationInfo.access_token;
         refresh_token = authenticationInfo.refresh_token;
-      }, logError);
+      });
 };
 
 // spotify methods
-const findSongOnSpotify = (query) => {
-  const options = {
-    uri: 'https://api.spotify.com/v1/search?type=track&q=' + encodeURIComponent(query),
+const findSongOnSpotify = (searchTerm) => {
+  const artistAlbumSongOptions = {
+    uri: 'https://api.spotify.com/v1/search?type=track&q=' + encodeURIComponent(searchTerm.artist + ' ' + searchTerm.album + ' ' + searchTerm.song),
     headers: {
       'Authorization': 'Bearer ' + access_token
     },
     json: true
   };
-  logInfo('Calling ' + options.uri)
-  return rp(options);
+  return rp(artistAlbumSongOptions)
+    .then(
+      (spotifyResult) => {
+        const firstResult = spotifyResult && spotifyResult.tracks && spotifyResult.tracks.items ? spotifyResult.tracks.items[0] : null;
+        if (firstResult) {
+          return Promise.resolve(firstResult);
+        }
+        logInfo('Could not find the song. Trying without an album: ' + searchTerm.artist + ' ' + searchTerm.song);
+        const artistSongOptions = {
+          uri: 'https://api.spotify.com/v1/search?type=track&q=' + encodeURIComponent(searchTerm.artist + ' ' + searchTerm.song),
+          headers: {
+            'Authorization': 'Bearer ' + access_token
+          },
+          json: true
+        };
+        return rp(artistSongOptions)
+          .then(
+            (spotifyResult) => {
+              const secondTry = spotifyResult && spotifyResult.tracks && spotifyResult.tracks.items ? spotifyResult.tracks.items[0] : null;
+              if (secondTry) {
+                return Promise.resolve(secondTry);
+              }
+              return Promise.reject('Could not find song on Spotify');
+            });
+      }
+    );
 }
 
 const getPlaylistTracks = (playlistId) => {
@@ -154,9 +179,7 @@ const getPlaylists = (suffix) => {
         if (playlistCollection && playlistCollection.items) {
           return playlistCollection.items.filter((playlist) => playlist.name.startsWith(suffix));
         }
-      },
-      logError
-    );
+      });
 };
 
 const createNewPlaylist = () => {
@@ -194,7 +217,6 @@ const addSongToPlayList = (spotifyTrack) => {
   if (songCache.has(spotifyTrack.uri)) {
     return Promise.reject('Song is a duplicate. Not adding.');
   }
-
   songCache.add(spotifyTrack.uri);
 
   const options = {
@@ -221,11 +243,7 @@ const getCurrentSiriusSong = () => {
     },
     json: true
   };
-  return rp(opts);
-};
-
-const addSong = () => {
-  getCurrentSiriusSong()
+  return rp(opts)
     .then(
       (siriusResponse) => {
         if (siriusResponse && siriusResponse.channelMetadataResponse &&
@@ -235,31 +253,18 @@ const addSong = () => {
           if (searchTerm.song !== previousTerm.song) {
             logInfo('Current song is: ' + searchTerm.artist + ' ' + searchTerm.album + ' ' + searchTerm.song);
             previousTerm = searchTerm;
-            return findSongOnSpotify(searchTerm.artist + ' ' + searchTerm.album + ' ' + searchTerm.song);
+            return Promise.resolve(searchTerm);
           }
           return Promise.reject('Song is the same.');
         }
-      },
-      logError
-    )
-    .then(
-      (spotifyResult) => {
-        const firstResult = spotifyResult && spotifyResult.tracks && spotifyResult.tracks.items ? spotifyResult.tracks.items[0] : null;
-        if (firstResult) {
-          return addSongToPlayList(firstResult);
-        } else {
-          logInfo('Could not find the song. Trying without an album: ' + previousTerm.artist + ' ' + previousTerm.song);
-          return findSongOnSpotify(previousTerm.artist + ' ' + previousTerm.song)
-            .then((spotifyResult) => {
-              const firstResult = spotifyResult.tracks && spotifyResult.tracks.items ? spotifyResult.tracks.items[0] : null;
-              if (firstResult) {
-                return addSongToPlayList(firstResult);
-              }
-            });
-        }
-      },
-      logError
-    )
+        return Promise.reject('Unusual response from the Sirius API')
+      });
+};
+
+const addSong = () => {
+  getCurrentSiriusSong()
+    .then(findSongOnSpotify)
+    .then(addSongToPlayList)
     .then(
       (spotifyResponse) => {
         if (spotifyResponse) {
@@ -271,13 +276,11 @@ const addSong = () => {
                   logInfo('Created new playlist ' + playlist.name);
                   currentPlaylist = playlist;
                 }
-              },
-              logError
-            );
+              });
         }
-      },
-      logError
-    );
+      }
+    )
+    .catch(logError);
   getCurrentSiriusSongAndAddToSpotify(120 * 1000);
 };
 
@@ -304,9 +307,7 @@ const refreshToken = () => {
       (refreshResponse) => {
         logInfo('Call to refresh access token succeeded');
         access_token = refreshResponse.access_token;
-      },
-      logError
-    );
+      });
   refreshSpotifyToken();
 }
 
@@ -325,9 +326,9 @@ const generateRandomString = (length) => {
   return text;
 };
 
-const logError = (error) => log('ERROR', error);
-
 const logInfo = (info) => log('INFO', info);
+
+const logError = (info) => log('ERROR', info);
 
 const log = (level, msg) => console.log(level + ': ' + msg);
 
