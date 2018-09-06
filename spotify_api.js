@@ -36,7 +36,7 @@ module.exports = class {
       method: 'POST',
       url: 'https://accounts.spotify.com/api/token',
       form: {
-        refresh_token: refresh_token,
+        refresh_token: this.refresh_token,
         grant_type: 'refresh_token'
       },
       headers: {
