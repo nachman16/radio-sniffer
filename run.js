@@ -4,14 +4,14 @@ const cors = require('cors');
 const querystring = require('querystring');
 const cookieParser = require('cookie-parser');
 const moment = require('moment')
+const SpotifyApi = require('./spotify_api');
 
-// spotify client info (client_id, client_secret, and playlistid)
+// spotify client info (client_id, client_secret, and userId)
 const spotifyConfig = require('./spotify_config');
 const redirect_uri = 'http://localhost:8888/callback'; // Your redirect uri
 const stateKey = 'spotify_auth_state';
 
-let access_token;
-let refresh_token;
+let spotifyApi;
 let previousTerm = {};
 let currentPlaylist;
 let songCache = new Set();
@@ -49,7 +49,8 @@ app.get('/callback', (req, res) => {
       }));
   } else {
     res.clearCookie(stateKey);
-    authenticateOnSpotify(code)
+    spotifyApi = new SpotifyApi(code);
+    spotifyApi.authenticated
       .then(seedCache)
       .then(() => getCurrentSiriusSongAndAddToSpotify(0))
       .catch(logError);
@@ -57,7 +58,7 @@ app.get('/callback', (req, res) => {
 });
 
 const seedCache = () => {
-  return getPlaylists('Sirius')
+  return spotifyApi.getPlaylists('Sirius')
     .then(
       (playlists) => {
         if (playlists) {
@@ -66,7 +67,7 @@ const seedCache = () => {
             if (playlist.tracks.total < 100) {
               currentPlaylist = playlist;
             }
-            promises.push(getPlaylistTracks(playlist.id).then(
+            promises.push(spotifyApi.getPlaylistTracks(playlist.id).then(
               (playlist) => {
                 if (playlist) {
                   playlist.items.forEach(i => songCache.add(i.track.uri));
@@ -80,155 +81,19 @@ const seedCache = () => {
       });
 }
 
-const authenticateOnSpotify = (code) => {
-  const authOptions = {
-    method: 'POST',
-    url: 'https://accounts.spotify.com/api/token',
-    form: {
-      code: code,
-      redirect_uri: redirect_uri,
-      grant_type: 'authorization_code'
-    },
-    headers: {
-      'Authorization': 'Basic ' + (new Buffer(spotifyConfig.client_id + ':' + spotifyConfig.client_secret).toString('base64'))
-    },
-    json: true
-  };
-  return rp(authOptions)
-    .then(
-      (authenticationInfo) => {
-        logInfo('Authenticated successfully');
-        access_token = authenticationInfo.access_token;
-        refresh_token = authenticationInfo.refresh_token;
-      });
-};
-
-// spotify methods
-const findSongOnSpotify = (searchTerm) => {
-  const artistAlbumSongOptions = {
-    uri: 'https://api.spotify.com/v1/search?type=track&q=' + encodeURIComponent(searchTerm.artist + ' ' + searchTerm.album + ' ' + searchTerm.song),
-    headers: {
-      'Authorization': 'Bearer ' + access_token
-    },
-    json: true
-  };
-  return rp(artistAlbumSongOptions)
-    .then(
-      (spotifyResult) => {
-        const firstResult = spotifyResult && spotifyResult.tracks && spotifyResult.tracks.items ? spotifyResult.tracks.items[0] : null;
-        if (firstResult) {
-          return Promise.resolve(firstResult);
-        }
-        logInfo('Could not find the song. Trying without an album: ' + searchTerm.artist + ' ' + searchTerm.song);
-        const artistSongOptions = {
-          uri: 'https://api.spotify.com/v1/search?type=track&q=' + encodeURIComponent(searchTerm.artist + ' ' + searchTerm.song),
-          headers: {
-            'Authorization': 'Bearer ' + access_token
-          },
-          json: true
-        };
-        return rp(artistSongOptions)
-          .then(
-            (spotifyResult) => {
-              const secondTry = spotifyResult && spotifyResult.tracks && spotifyResult.tracks.items ? spotifyResult.tracks.items[0] : null;
-              if (secondTry) {
-                return Promise.resolve(secondTry);
-              }
-              return Promise.reject('Could not find song on Spotify');
-            });
-      }
-    );
-}
-
-const getPlaylistTracks = (playlistId) => {
-  const options = {
-    uri: 'https://api.spotify.com/v1/playlists/' + playlistId + '/tracks',
-    headers: {
-      'Authorization': 'Bearer ' + access_token
-    },
-    json: true
-  };
-  logInfo('Calling ' + options.uri)
-  return rp(options);
-}
-
-const getPlaylist = (playlistId) => {
-  const options = {
-    uri: 'https://api.spotify.com/v1/playlists/' + playlistId,
-    headers: {
-      'Authorization': 'Bearer ' + access_token
-    },
-    json: true
-  };
-  logInfo('Calling ' + options.uri)
-  return rp(options);
-}
-
-const getPlaylists = (suffix) => {
-  const options = {
-    uri: 'https://api.spotify.com/v1/me/playlists',
-    headers: {
-      'Authorization': 'Bearer ' + access_token
-    },
-    json: true
-  };
-  logInfo('Calling ' + options.uri)
-  return rp(options)
-    .then(
-      (playlistCollection) => {
-        if (playlistCollection && playlistCollection.items) {
-          return playlistCollection.items.filter((playlist) => playlist.name.startsWith(suffix));
-        }
-      });
-};
-
-const createNewPlaylist = () => {
-  const options = {
-    method: 'POST',
-    uri: 'https://api.spotify.com/v1/users/' + spotifyConfig.userId + '/playlists',
-    headers: {
-      'Authorization': 'Bearer ' + access_token
-    },
-    body: {
-      name: 'Sirius Real Jazz ' + (parseInt(currentPlaylist.name.split(' ').pop()) + 1)
-    },
-    json: true
-  };
-  logInfo('Calling ' + options.uri)
-  return rp(options);
-}
-
 const checkAndMaybeCreateNewPlaylist = () => {
-  return getPlaylist(currentPlaylist.id)
+  return spotifyApi.getPlaylist(currentPlaylist.id)
     .then(
       (playlist) => {
         if (playlist) {
           currentPlaylist = playlist;
         }
         if (currentPlaylist.tracks.total >= 100) {
-          return createNewPlaylist();
+          return spotifyApi.createNewPlaylist(currentPlaylist.name);
         }
         return Promise.resolve();
       }
     )
-}
-
-const addSongToPlayList = (spotifyTrack) => {
-  if (songCache.has(spotifyTrack.uri)) {
-    return Promise.reject('Song is a duplicate. Not adding.');
-  }
-  songCache.add(spotifyTrack.uri);
-
-  const options = {
-    method: 'POST',
-    uri: 'https://api.spotify.com/v1/playlists/' + currentPlaylist.id + '/tracks?uris=' + spotifyTrack.uri,
-    headers: {
-      'Authorization': 'Bearer ' + access_token
-    },
-    json: true
-  };
-  logInfo('Calling ' + options.uri)
-  return rp(options);
 }
 
 const getCurrentSiriusSong = () => {
@@ -263,8 +128,14 @@ const getCurrentSiriusSong = () => {
 
 const addSong = () => {
   getCurrentSiriusSong()
-    .then(findSongOnSpotify)
-    .then(addSongToPlayList)
+    .then((searchTerm) => spotifyApi.findSongOnSpotify(searchTerm))
+    .then((spotifyTrack) => {
+      if (songCache.has(spotifyTrack.uri)) {
+        return Promise.reject('Song is a duplicate. Not adding.');
+      }
+      songCache.add(spotifyTrack.uri);
+      return spotifyApi.addSongToPlayList(currentPlaylist.id, spotifyTrack);
+    })
     .then(
       (spotifyResponse) => {
         if (spotifyResponse) {
@@ -285,31 +156,6 @@ const addSong = () => {
 };
 
 const getCurrentSiriusSongAndAddToSpotify = (timeout) => setTimeout(addSong, timeout);
-
-const refreshSpotifyToken = () => setTimeout(refreshToken, 1000 * 60 * 30);
-
-const refreshToken = () => {
-  const authOptions = {
-    method: 'POST',
-    url: 'https://accounts.spotify.com/api/token',
-    form: {
-      refresh_token: refresh_token,
-      grant_type: 'refresh_token'
-    },
-    headers: {
-      'Authorization': 'Basic ' + (new Buffer(spotifyConfig.client_id + ':' + spotifyConfig.client_secret).toString('base64'))
-    },
-    json: true
-  };
-
-  rp(authOptions)
-    .then(
-      (refreshResponse) => {
-        logInfo('Call to refresh access token succeeded');
-        access_token = refreshResponse.access_token;
-      });
-  refreshSpotifyToken();
-}
 
 /**
  * Generates a random string containing numbers and letters
@@ -333,6 +179,5 @@ const logError = (info) => log('ERROR', info);
 const log = (level, msg) => console.log(level + ': ' + msg);
 
 // start application
-refreshSpotifyToken();
 logInfo('Listening on 8888');
 app.listen(8888);
