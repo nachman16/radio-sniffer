@@ -5,7 +5,7 @@ const redirect_uri = 'http://localhost:8888/callback'; // Your redirect uri
 module.exports = class {
   constructor(code) {
     this._authenticated = this._authenticateOnSpotify(code);
-    setTimeout(this._refreshToken, 1000 * 60 * 30);
+    this._refreshTokenInHalfAnHour();
   }
 
   // private initialization method
@@ -45,13 +45,17 @@ module.exports = class {
       json: true
     };
 
-    setTimeout(this._refreshToken, 1000 * 60 * 30);
+    this._refreshTokenInHalfAnHour();
 
     rp(authOptions)
       .then(
         (refreshResponse) => {
           this.access_token = refreshResponse.access_token;
         });
+  }
+
+  _refreshTokenInHalfAnHour() {
+    setTimeout(() => this._refreshToken(), 1000 * 60 * 30);
   }
 
   // public methods

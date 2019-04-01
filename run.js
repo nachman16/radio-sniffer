@@ -66,6 +66,7 @@ const seedCache = () => {
           playlists.forEach((playlist) => {
             if (playlist.tracks.total < 100) {
               currentPlaylist = playlist;
+              logInfo('Adding to playlist: ' + currentPlaylist)
             }
             promises.push(spotifyApi.getPlaylistTracks(playlist.id).then(
               (playlist) => {
@@ -122,7 +123,7 @@ const getCurrentSiriusSong = () => {
           }
           return Promise.reject('Song is the same.');
         }
-        return Promise.reject('Unusual response from the Sirius API')
+        return Promise.reject('Unusual response from the Sirius API: ' + JSON.stringify(siriusResponse))
       });
 };
 
