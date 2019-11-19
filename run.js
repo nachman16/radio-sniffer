@@ -1,9 +1,9 @@
 const express = require('express');
 const rp = require('request-promise-native');
 const cors = require('cors');
+const moment = require('moment')
 const querystring = require('querystring');
 const cookieParser = require('cookie-parser');
-const moment = require('moment')
 const SpotifyApi = require('./spotify_api');
 
 // spotify client info (client_id, client_secret, and userId)
@@ -66,7 +66,7 @@ const seedCache = () => {
           playlists.forEach((playlist) => {
             if (playlist.tracks.total < 100) {
               currentPlaylist = playlist;
-              logInfo('Adding to playlist: ' + currentPlaylist)
+              logInfo('Adding to playlist: ' + currentPlaylist.name)
             }
             promises.push(spotifyApi.getPlaylistTracks(playlist.id).then(
               (playlist) => {
@@ -98,8 +98,7 @@ const checkAndMaybeCreateNewPlaylist = () => {
 }
 
 const getCurrentSiriusSong = () => {
-  const timestamp = moment().add(4, 'hours').format('MM-DD-HH:mm:00');
-  const url = 'https://www.siriusxm.com/metadata/pdt/en-us/json/channels/purejazz/timestamp/' + timestamp;
+  const url = 'https://www.siriusxm.com/servlet/Satellite?pagename=SXM/Services/MountainWrapper&channels=purejazz';
   const opts = {
     uri: url,
     headers: {
@@ -112,9 +111,8 @@ const getCurrentSiriusSong = () => {
   return rp(opts)
     .then(
       (siriusResponse) => {
-        if (siriusResponse && siriusResponse.channelMetadataResponse &&
-          siriusResponse.channelMetadataResponse.metaData && siriusResponse.channelMetadataResponse.metaData.currentEvent) {
-          const event = siriusResponse.channelMetadataResponse.metaData.currentEvent, artist = event.artists.name, album = event.song.album.name, songName = event.song.name
+        if (siriusResponse && siriusResponse.channels && siriusResponse.channels.purejazz && siriusResponse.channels.purejazz.content) {
+          const event = siriusResponse.channels.purejazz.content, artist = event.artists[0].name.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, " "), album = event.album.title, songName = event.title
           const searchTerm = {artist: artist, album: album, song: songName};
           if (searchTerm.song !== previousTerm.song) {
             logInfo('Current song is: ' + searchTerm.artist + ' ' + searchTerm.album + ' ' + searchTerm.song);
@@ -177,7 +175,7 @@ const logInfo = (info) => log('INFO', info);
 
 const logError = (info) => log('ERROR', info);
 
-const log = (level, msg) => console.log(level + ': ' + msg);
+const log = (level, msg) => console.log('(' + moment().format('MM-DD-HH:mm:ss') + ') ' + level + ': ' + msg);
 
 // start application
 logInfo('Listening on 8888');
