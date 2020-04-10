@@ -112,7 +112,7 @@ const getCurrentSiriusSong = () => {
     .then(
       (siriusResponse) => {
         if (siriusResponse && siriusResponse.channels && siriusResponse.channels.purejazz && siriusResponse.channels.purejazz.content) {
-          const event = siriusResponse.channels.purejazz.content, artist = event.artists[0].name.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, " "), album = event.album.title, songName = event.title
+          const event = siriusResponse.channels.purejazz.content, artist = event.artists[0].name.replace(/[.,\/#!$%\^&\*;:{}=\-_`~()]/g, " "), album = event.album.title ? event.album.title : '', songName = event.title
           const searchTerm = {artist: artist, album: album, song: songName};
           if (searchTerm.song !== previousTerm.song) {
             logInfo('Current song is: ' + searchTerm.artist + ' ' + searchTerm.album + ' ' + searchTerm.song);
